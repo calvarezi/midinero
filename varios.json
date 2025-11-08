@@ -1,0 +1,20 @@
+{
+    "username": "calvarez",
+    "password": "F97a0qdv9n"
+}
+
+http://127.0.0.1:8000/api/finances/categories/
+{
+  "category": 1,
+  "month": "2025-11-01",
+  "target_amount": 300000,
+  "notify_when_exceeded": true
+}
+
+
+http://127.0.0.1:8000/api/finances/budgets/
+{
+  "category": 1,
+  "month": "2025-11-01",
+  "limit_amount": 200000
+}
