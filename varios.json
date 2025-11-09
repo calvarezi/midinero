@@ -18,3 +18,74 @@ http://127.0.0.1:8000/api/finances/budgets/
   "month": "2025-11-01",
   "limit_amount": 200000
 }
+
+
+midinero-frontend/
+│
+├── src/
+│   ├── api/
+│   │   ├── axiosConfig.js           # Configuración base de Axios
+│   │   ├── budgetService.js         # Servicios relacionados con presupuestos
+│   │   ├── dashboardService.js      # Servicios del dashboard analítico
+│   │   ├── goalService.js           # Servicios de metas financieras
+│   │   └── authService.js           # Login, registro y refresh de tokens
+│   │
+│   ├── components/
+│   │   ├── charts/                  # Gráficas (Recharts)
+│   │   │   ├── BudgetChart.jsx
+│   │   │   ├── ExpenseTrendChart.jsx
+│   │   │   └── CategoryBreakdownChart.jsx
+│   │   ├── layout/                  # Layouts y UI compartida
+│   │   │   ├── Navbar.jsx
+│   │   │   ├── Sidebar.jsx
+│   │   │   ├── Header.jsx
+│   │   │   └── DashboardLayout.jsx
+│   │   └── ui/                      # Componentes UI reutilizables
+│   │       ├── Button.jsx
+│   │       ├── Card.jsx
+│   │       ├── Loader.jsx
+│   │       └── Alert.jsx
+│   │
+│   ├── context/
+│   │   ├── AuthContext.jsx          # Contexto global de autenticación
+│   │   └── ThemeContext.jsx         # Contexto de tema o modo oscuro
+│   │
+│   ├── hooks/
+│   │   ├── useAuth.js               # Manejo de autenticación
+│   │   ├── useDashboardData.js      # Manejo del estado del dashboard
+│   │   └── useBudget.js             # Hook para gestión de presupuestos
+│   │
+│   ├── pages/
+│   │   ├── Dashboard/
+│   │   │   ├── DashboardPage.jsx
+│   │   │   ├── OverviewSection.jsx
+│   │   │   ├── TrendsSection.jsx
+│   │   │   ├── CategoriesSection.jsx
+│   │   │   └── BudgetHealthSection.jsx
+│   │   ├── Budgets/
+│   │   │   ├── BudgetListPage.jsx
+│   │   │   ├── BudgetForm.jsx
+│   │   │   └── BudgetDetails.jsx
+│   │   ├── Auth/
+│   │   │   ├── LoginPage.jsx
+│   │   │   └── RegisterPage.jsx
+│   │   └── Settings/
+│   │       └── SettingsPage.jsx
+│   │
+│   ├── routes/
+│   │   └── AppRouter.jsx            # Definición central de rutas
+│   │
+│   ├── utils/
+│   │   ├── formatters.js            # Funciones de formato (monedas, fechas)
+│   │   └── constants.js             # Constantes globales (API URLs, roles)
+│   │
+│   ├── App.jsx
+│   ├── main.jsx
+│   └── index.css
+│
+├── .eslintrc.json
+├── .prettierrc
+├── vite.config.js
+├── package.json
+└── README.md
+

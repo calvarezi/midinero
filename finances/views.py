@@ -76,15 +76,36 @@ class CategoryViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """
+        ✅ CORRECCIÓN: Agregar select_related aunque no sea crítico aquí
         Devuelve solo las categorías del usuario autenticado.
         """
-        return Category.objects.filter(user=self.request.user).order_by('name')
+        return (
+            Category.objects
+            .filter(user=self.request.user)
+            .select_related('user')  
+            .order_by('name')
+        )
 
     def perform_create(self, serializer):
         """
         Asigna automáticamente el usuario a la nueva categoría.
         """
         serializer.save(user=self.request.user)
+
+    def perform_destroy(self, instance):
+        """
+        VALIDACIÓN: Verificar si hay transacciones antes de eliminar.
+        """
+        transaction_count = instance.transactions.count()
+        
+        if transaction_count > 0:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError(
+                f"No puedes eliminar esta categoría porque tiene {transaction_count} "
+                "transacciones asociadas. Elimina primero las transacciones."
+            )
+        
+        super().perform_destroy(instance)
 
 
 # ==========================================================
@@ -105,12 +126,13 @@ class TransactionViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """
+        Optimizar con select_related 
         Devuelve las transacciones del usuario autenticado.
         """
         return (
             Transaction.objects
             .filter(user=self.request.user)
-            .select_related('category')
+            .select_related('category', 'user')
             .order_by('-date')
         )
 
@@ -127,48 +149,201 @@ class TransactionViewSet(viewsets.ModelViewSet):
         month = transaction.date.replace(day=1)
 
         # ===================================
-        # 1️⃣ Notificación de transacción
-        # ===================================
-        NotificationService.create_transaction_notification(transaction)
-
-        # ===================================
-        # 2️⃣ Verificar si afecta a un presupuesto
+        # Notificación de transacción
         # ===================================
         try:
-            budget = Budget.objects.get(user=user, category=transaction.category, month=month)
-            if transaction.category.type == 'expense':
-                budget.check_status()  # ← Esto activa alertas de 90% o 100%
-        except Budget.DoesNotExist:
-            pass
+            NotificationService.create_transaction_notification(transaction)
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error creando notificación de transacción: {e}")
 
         # ===================================
-        # 3️⃣ Actualizar progreso de metas financieras
+        # Verificar si afecta a un presupuesto
         # ===================================
-        goals = FinancialGoal.objects.filter(user=user, month=month)
-        for goal in goals:
-            FinancialGoalViewSet().update_goal_progress(goal)
+        if transaction.category.type == 'expense':  
+            try:
+                budget = Budget.objects.get(
+                    user=user, 
+                    category=transaction.category, 
+                    month=month
+                )
+                budget.check_status()
+            except Budget.DoesNotExist:
+                pass  # 
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error verificando presupuesto: {e}")
+
+        # ===================================
+        # progreso de metas financieras
+        # ===================================
+        try:
+            goals = FinancialGoal.objects.filter(user=user, month=month)
+            for goal in goals:
+                self.update_goal_progress(goal)
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error actualizando metas: {e}")
+
+    def update_goal_progress(self, goal):
+        """
+        Actualiza el progreso de una meta financiera basándose en transacciones.
+        """
+        user = goal.user
+        month = goal.month
+
+        # Calcular ingresos y gastos del mes
+        total_income = user.transactions.filter(
+            category__type='income',
+            date__year=month.year,
+            date__month=month.month
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+        total_expense = user.transactions.filter(
+            category__type='expense',
+            date__year=month.year,
+            date__month=month.month
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+        # Ahorro = Ingresos - Gastos
+        current_savings = total_income - total_expense
+        goal.current_amount = current_savings
+
+        # Verificar si se alcanzó la meta
+        if current_savings >= goal.target_amount and not goal.achieved:
+            goal.achieved = True
+            
+            # Enviar notificación
+            try:
+                NotificationService.create(
+                    user=user,
+                    type='GOAL_COMPLETED',
+                    title=f"¡Meta alcanzada: {goal.name}!",
+                    message=(
+                        f"¡Felicidades! Has alcanzado tu meta '{goal.name}' "
+                        f"de ${goal.target_amount:.2f}."
+                    ),
+                    priority='MEDIUM',
+                    send_email=True
+                )
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error enviando notificación de meta: {e}")
+
+        goal.save()
 
     @action(detail=False, methods=['get'], url_path='summary')
     def summary(self, request):
         """
         Devuelve el resumen financiero del usuario (ingresos, gastos, balance).
+        Usar aggregate en una sola query
         """
         user = request.user
-        transactions = Transaction.objects.filter(user=user)
-
-        totals = transactions.aggregate(
+        
+        # Optimización: Una sola query con aggregate
+        totals = Transaction.objects.filter(user=user).aggregate(
             total_income=Sum('amount', filter=Q(category__type='income')),
             total_expense=Sum('amount', filter=Q(category__type='expense')),
         )
 
+        # Convertir a Decimal para evitar errores con None
+        total_income = Decimal(totals['total_income'] or 0)
+        total_expense = Decimal(totals['total_expense'] or 0)
+
         data = {
-            "total_income": totals['total_income'] or 0,
-            "total_expense": totals['total_expense'] or 0,
-            "balance": (totals['total_income'] or 0) - (totals['total_expense'] or 0),
+            "total_income": float(total_income),
+            "total_expense": float(total_expense),
+            "balance": float(total_income - total_expense),
         }
 
-        return success_response(data=data, message="Resumen financiero obtenido correctamente.")
+        return success_response(
+            data=data, 
+            message="Resumen financiero obtenido correctamente."
+        )
 
+    # Exportar transacciones
+    @action(detail=False, methods=['get'], url_path='export')
+    def export(self, request):
+        """
+        Exporta las transacciones del usuario en formato CSV o XLSX.
+        Uso: /api/finances/transactions/export/?format=csv
+        """
+        user = request.user
+        formato = request.query_params.get('format', 'csv').lower()
+        
+        queryset = self.get_queryset()
+
+        if not queryset.exists():
+            return error_response(
+                "No hay transacciones para exportar.", 
+                status.HTTP_404_NOT_FOUND
+            )
+
+        if formato == 'csv':
+            buffer = io.StringIO()
+            writer = csv.writer(buffer)
+            writer.writerow([
+                "ID", "Fecha", "Categoría", "Tipo", "Monto", "Descripción"
+            ])
+            
+            for t in queryset:
+                writer.writerow([
+                    t.id,
+                    t.date.strftime("%Y-%m-%d %H:%M"),
+                    t.category.name,
+                    t.category.get_type_display(),
+                    float(t.amount),
+                    t.description
+                ])
+            
+            response = HttpResponse(buffer.getvalue(), content_type='text/csv')
+            response['Content-Disposition'] = (
+                f'attachment; filename="transacciones_{user.username}.csv"'
+            )
+            return response
+
+        elif formato == 'xlsx':
+            from openpyxl import Workbook
+            
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Transacciones"
+            
+            # Encabezados
+            ws.append(["ID", "Fecha", "Categoría", "Tipo", "Monto", "Descripción"])
+            
+            # Datos
+            for t in queryset:
+                ws.append([
+                    t.id,
+                    t.date.strftime("%Y-%m-%d %H:%M"),
+                    t.category.name,
+                    t.category.get_type_display(),
+                    float(t.amount),
+                    t.description
+                ])
+            
+            buffer = io.BytesIO()
+            wb.save(buffer)
+            buffer.seek(0)
+            
+            response = HttpResponse(
+                buffer.getvalue(),
+                content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            )
+            response['Content-Disposition'] = (
+                f'attachment; filename="transacciones_{user.username}.xlsx"'
+            )
+            return response
+
+        return error_response(
+            "Formato no soportado. Usa 'csv' o 'xlsx'.", 
+            status.HTTP_400_BAD_REQUEST
+        )
 # ==========================================================
 # PRESUPUESTOS
 # ==========================================================

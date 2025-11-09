@@ -1,70 +1,119 @@
-# ===========================================
-# RUTAS DE LA APP "finances"
-# ===========================================
-# Este archivo define todas las rutas relacionadas con:
-# - Categorías (ingresos / gastos)
-# - Transacciones
-# - Resumen financiero (integrado en TransactionViewSet)
-#
-# Usa el enrutador de Django REST Framework para generar automáticamente:
-#   - Rutas CRUD (list, create, retrieve, update, delete)
-#   - Rutas personalizadas (summary)
-# ===========================================
+"""
+Rutas de la app finances.
+
+Incluye:
+- CRUD de categorías, transacciones, presupuestos, metas
+- Dashboard y análisis financiero
+- Notificaciones
+- Configuración de usuario
+"""
 
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import CategoryViewSet, TransactionViewSet, NotificationViewSet, UserSettingsViewSet, BudgetViewSet, FinancialGoalViewSet
-
-# ===========================================
-# Router principal de la app
-# ===========================================
-# El router genera las rutas automáticamente según los viewsets.
-#
-# Estructura base:
-#   /api/finances/categories/           → listar y crear categorías
-#   /api/finances/categories/{id}/      → obtener, actualizar o eliminar
-#   /api/finances/transactions/         → listar y crear transacciones
-#   /api/finances/transactions/{id}/    → obtener, actualizar o eliminar
-#   /api/finances/transactions/summary/ → resumen general del usuario
-# ===========================================
+from .views import (
+    CategoryViewSet,
+    TransactionViewSet,
+    NotificationViewSet,
+    UserSettingsViewSet,
+    BudgetViewSet,
+    FinancialGoalViewSet
+)
+from .views_dashboard import DashboardViewSet
 
 router = DefaultRouter()
+
+# CRUD endpoints
 router.register(r'categories', CategoryViewSet, basename='category')
 router.register(r'transactions', TransactionViewSet, basename='transaction')
 router.register(r'budgets', BudgetViewSet, basename='budget')
-router.register('goals', FinancialGoalViewSet, basename='financialgoal')
-router.register('notifications', NotificationViewSet, basename='notification'),
-router.register('settings', UserSettingsViewSet, basename='usersettings')
+router.register(r'goals', FinancialGoalViewSet, basename='financialgoal')
+router.register(r'notifications', NotificationViewSet, basename='notification')
+router.register(r'settings', UserSettingsViewSet, basename='usersettings')
 
-# ===========================================
-# URL patterns
-# ===========================================
-# Se incluyen las rutas generadas automáticamente.
-# No es necesario registrar endpoints manuales como "summary",
-# ya que está implementado dentro del TransactionViewSet.
-# ===========================================
+# Dashboard endpoints
+router.register(r'dashboard', DashboardViewSet, basename='dashboard')
 
 urlpatterns = [
     path('', include(router.urls)),
 ]
 
-# ===========================================
-# EJEMPLOS DE USO (para documentación y pruebas)
-# ===========================================
-# Categorías
-#   GET    /api/finances/categories/           → lista de categorías del usuario
-#   POST   /api/finances/categories/           → crear nueva categoría
-#   GET    /api/finances/categories/{id}/      → obtener una categoría
-#   PUT    /api/finances/categories/{id}/      → actualizar una categoría
-#   DELETE /api/finances/categories/{id}/      → eliminar una categoría
-#
-# Transacciones
-#   GET    /api/finances/transactions/         → lista de transacciones del usuario
-#   POST   /api/finances/transactions/         → crear nueva transacción
-#   GET    /api/finances/transactions/{id}/    → obtener una transacción
-#   PUT    /api/finances/transactions/{id}/    → actualizar una transacción
-#   DELETE /api/finances/transactions/{id}/    → eliminar una transacción
-#
-# Resumen financiero
-#   GET    /api/finances/transactions/summary/ → obtener resumen (ingresos, gastos, balance)
-# ===========================================
+"""
+Endpoints disponibles:
+
+CATEGORIAS:
+- GET    /api/finances/categories/
+- POST   /api/finances/categories/
+- GET    /api/finances/categories/{id}/
+- PUT    /api/finances/categories/{id}/
+- PATCH  /api/finances/categories/{id}/
+- DELETE /api/finances/categories/{id}/
+
+TRANSACCIONES:
+- GET    /api/finances/transactions/
+- POST   /api/finances/transactions/
+- GET    /api/finances/transactions/{id}/
+- PUT    /api/finances/transactions/{id}/
+- PATCH  /api/finances/transactions/{id}/
+- DELETE /api/finances/transactions/{id}/
+- GET    /api/finances/transactions/summary/
+- GET    /api/finances/transactions/export/?format=csv|xlsx
+
+PRESUPUESTOS:
+- GET    /api/finances/budgets/
+- POST   /api/finances/budgets/
+- GET    /api/finances/budgets/{id}/
+- PUT    /api/finances/budgets/{id}/
+- PATCH  /api/finances/budgets/{id}/
+- DELETE /api/finances/budgets/{id}/
+
+METAS FINANCIERAS:
+- GET    /api/finances/goals/
+- POST   /api/finances/goals/
+- GET    /api/finances/goals/{id}/
+- PUT    /api/finances/goals/{id}/
+- PATCH  /api/finances/goals/{id}/
+- DELETE /api/finances/goals/{id}/
+- POST   /api/finances/goals/{id}/add-amount/
+- GET    /api/finances/goals/{id}/progress/
+- GET    /api/finances/goals/export/?format=csv|xlsx
+
+NOTIFICACIONES:
+- GET    /api/finances/notifications/
+- POST   /api/finances/notifications/
+- GET    /api/finances/notifications/{id}/
+- PUT    /api/finances/notifications/{id}/
+- PATCH  /api/finances/notifications/{id}/
+- DELETE /api/finances/notifications/{id}/
+- POST   /api/finances/notifications/{id}/mark-read/
+- POST   /api/finances/notifications/mark-all-read/
+- POST   /api/finances/notifications/{id}/archive/
+- POST   /api/finances/notifications/clear-read/
+- POST   /api/finances/notifications/send-test-email/
+- GET    /api/finances/notifications/summary/
+
+CONFIGURACION:
+- GET    /api/finances/settings/
+- POST   /api/finances/settings/
+- GET    /api/finances/settings/{id}/
+- PUT    /api/finances/settings/{id}/
+- PATCH  /api/finances/settings/{id}/
+
+DASHBOARD Y ANALISIS:
+- GET    /api/finances/dashboard/overview/
+         Query params: start_date, end_date
+         
+- GET    /api/finances/dashboard/trends/
+         Query params: months (default: 12, max: 36)
+         
+- GET    /api/finances/dashboard/categories/
+         Query params: category_type, start_date, end_date
+         
+- GET    /api/finances/dashboard/patterns/
+         Query params: days (default: 90, max: 365)
+         
+- GET    /api/finances/dashboard/prediction/
+         Query params: months_to_analyze (default: 6, max: 12)
+         
+- GET    /api/finances/dashboard/budget-health/
+         Query params: month (formato: YYYY-MM-DD)
+"""

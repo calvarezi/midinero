@@ -16,7 +16,7 @@ class NotificationService:
     # MÉTODO BASE DE CREACIÓN DE NOTIFICACIONES
     # ==========================================================
     @staticmethod
-    def create(user, type, title, message, priority="NORMAL", send_email=False):
+    def create(user, type, title, message, priority="NORMAL", send_email=True):
         """
         Crea una notificación en la base de datos y opcionalmente envía un correo.
 

@@ -55,6 +55,9 @@ INSTALLED_APPS = [
     # black list para JWT
     'rest_framework_simplejwt.token_blacklist',
 
+    # cors headers
+    'corsheaders',
+
 ]
 
 
@@ -73,6 +76,9 @@ MIDDLEWARE = [
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",  # Puerto de React (vite)
 ]
+
+CORS_ALLOW_CREDENTIALS = True
+
 
 # ===========================================
 # CONFIGURACIÓN DE DJANGO REST FRAMEWORK

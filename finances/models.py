@@ -6,8 +6,6 @@ from django.db.models import Sum
 from decimal import Decimal
 
 
-
-
 class Category(models.Model):
     TYPE_CHOICES = [
         ('income', 'Ingreso'),
@@ -75,12 +73,12 @@ class FinancialGoal(models.Model):
         return f"{self.name} ({self.month.strftime('%Y-%m')})"
 
 
-
 class Notification(models.Model):
     class NotificationType(models.TextChoices):
         HIGH_EXPENSE = 'HIGH_EXPENSE', 'Gasto alto'
         GOAL_COMPLETED = 'GOAL_COMPLETED', 'Meta cumplida'
         BUDGET_EXCEEDED = 'BUDGET_EXCEEDED', 'Presupuesto superado'
+        BUDGET_WARNING = 'BUDGET_WARNING', 'Advertencia de presupuesto'  # ✅ AGREGADO
         REMINDER = 'REMINDER', 'Recordatorio'
         SYSTEM = 'SYSTEM', 'Sistema'
 
@@ -104,12 +102,14 @@ class Notification(models.Model):
     def __str__(self):
         return f"[{self.get_type_display()}] {self.title}"
 
+
 class UserSettings(models.Model):
     """Configuraciones personalizadas del usuario (umbral de gasto, alertas, etc)."""
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="settings")
     high_expense_threshold = models.DecimalField(max_digits=12, decimal_places=2, default=500000)
     receive_email_notifications = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True) 
+    
     def __str__(self):
         return f"Configuración de {self.user.username}"
 
@@ -138,50 +138,78 @@ class Budget(models.Model):
         return f"{self.user.username} - {self.category.name} ({self.month:%Y-%m})"
 
     # ============================
-    # NUEVA FUNCIÓN AUTOMÁTICA
+    # Logica de notificaciones
     # ============================
     def check_status(self):
         """
         Evalúa si el gasto ha superado el 90% o 100% del presupuesto.
         Envía notificaciones automáticas si corresponde.
         """
-        from finances.models import Transaction  # evitar import circular
-
-        total_spent = Transaction.objects.filter(
-            user=self.user,
+        #  Usar relación inversa en vez de import circular
+        total_spent = self.user.transactions.filter(
             category=self.category,
             category__type='expense',
             date__year=self.month.year,
             date__month=self.month.month
-        ).aggregate(total=Sum('amount'))['total'] or 0
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
 
-        progress = (Decimal(total_spent) / Decimal(self.target_amount)) * Decimal(100)
+        # evitar division por cero
+        if self.limit_amount == 0:
+            return  
 
+        progress = (Decimal(total_spent) / Decimal(self.limit_amount)) * Decimal(100)
+
+        #  Evitar notificaciones duplicadas
         if progress >= 100 and self.notify_when_exceeded:
-            NotificationService.create(
+            # Verificar si ya existe notificación reciente
+            recent_notification = Notification.objects.filter(
                 user=self.user,
                 type='BUDGET_EXCEEDED',
-                title=f"Presupuesto superado: {self.category.name}",
-                message=(
-                    f"Has superado tu presupuesto para {self.category.name} en {self.month.strftime('%Y-%m')}. "
-                    f"Gasto total: ${total_spent:.2f} / Límite: ${self.limit_amount:.2f}."
-                ),
-                priority='HIGH',
-                send_email=True
-            )
+                title__icontains=self.category.name,
+                created_at__year=self.month.year,
+                created_at__month=self.month.month
+            ).exists()
+
+            if not recent_notification:
+                # Import del servicio 
+                from finances.services.notifications_service import NotificationService
+                
+                NotificationService.create(
+                    user=self.user,
+                    type='BUDGET_EXCEEDED',
+                    title=f"Presupuesto superado: {self.category.name}",
+                    message=(
+                        f"Has superado tu presupuesto para {self.category.name} en {self.month.strftime('%Y-%m')}. "
+                        f"Gasto total: ${total_spent:.2f} / Límite: ${self.limit_amount:.2f}."
+                    ),
+                    priority='HIGH',
+                    send_email=True
+                )
 
         elif progress >= 90 and self.notify_when_exceeded:
-            NotificationService.create(
+            # Verificar si ya existe notificación de advertencia reciente
+            recent_warning = Notification.objects.filter(
                 user=self.user,
                 type='BUDGET_WARNING',
-                title=f"Presupuesto casi agotado: {self.category.name}",
-                message=(
-                    f"Ya usaste el {progress:.1f}% del presupuesto para {self.category.name} "
-                    f"en {self.month.strftime('%Y-%m')}. Controla tus gastos."
-                ),
-                priority='MEDIUM',
-                send_email=True
-            )
+                title__icontains=self.category.name,
+                created_at__year=self.month.year,
+                created_at__month=self.month.month
+            ).exists()
+
+            if not recent_warning:
+                from finances.services.notifications_service import NotificationService
+                
+                NotificationService.create(
+                    user=self.user,
+                    type='BUDGET_WARNING',
+                    title=f"Presupuesto casi agotado: {self.category.name}",
+                    message=(
+                        f"Ya usaste el {progress:.1f}% del presupuesto para {self.category.name} "
+                        f"en {self.month.strftime('%Y-%m')}. Controla tus gastos."
+                    ),
+                    priority='MEDIUM',
+                    send_email=True
+                )
 
     def save(self, *args, **kwargs):
         """
@@ -191,4 +219,7 @@ class Budget(models.Model):
         try:
             self.check_status()
         except Exception as e:
-            print(f"[WARN] No se pudo verificar estado del presupuesto: {e}")
+            
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"No se pudo verificar estado del presupuesto {self.id}: {e}")
