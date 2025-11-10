@@ -1,6 +1,8 @@
 from rest_framework import serializers
 from finances.models import FinancialGoal
 from django.db.models import Sum
+from decimal import Decimal
+
 
 
 class FinancialGoalSerializer(serializers.ModelSerializer):
@@ -8,17 +10,7 @@ class FinancialGoalSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = FinancialGoal
-        fields = [
-            'id', 
-            'name', 
-            'user', 
-            'month', 
-            'target_amount', 
-            'current_amount', 
-            'achieved', 
-            'progress', 
-            'created_at'
-        ]
+        fields = "__all__"
         read_only_fields = ['id', 'user', 'achieved', 'progress', 'created_at']
 
     def get_progress(self, obj):

@@ -32,7 +32,7 @@ class BudgetSerializer(serializers.ModelSerializer):
             date__year=obj.month.year,
             date__month=obj.month.month
         ).aggregate(total=models.Sum('amount'))['total'] or 0
-        return round(float(total), 2)  # ✅ Convertir a float para JSON
+        return round(float(total), 2)
 
     def get_progress_percentage(self, obj):
         """Calcula el porcentaje de progreso del presupuesto."""

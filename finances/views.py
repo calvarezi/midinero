@@ -26,6 +26,8 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.units import cm
+from decimal import Decimal
+
 
 # ==========================================================
 # MODELOS
@@ -416,11 +418,6 @@ class BudgetViewSet(viewsets.ModelViewSet):
 
 
 class FinancialGoalViewSet(viewsets.ModelViewSet):
-    """
-    Gestión de múltiples metas financieras mensuales.
-    Permite crear, listar, actualizar y eliminar metas individuales.
-    Calcula progreso y dispara notificaciones automáticamente.
-    """
     serializer_class = FinancialGoalSerializer
     permission_classes = [permissions.IsAuthenticated, IsOwnerOrReadOnly]
 
@@ -436,142 +433,42 @@ class FinancialGoalViewSet(viewsets.ModelViewSet):
         self.update_goal_progress(goal)
 
     def update_goal_progress(self, goal):
-        """
-        Calcula el progreso de la meta sumando todos los ingresos menos gastos
-        del mes de la meta. Actualiza 'current_amount', 'progress' y dispara
-        notificación si se alcanza la meta.
-        """
         user = goal.user
         month = goal.month
 
-        total_income = user.transactions.filter(
-            category__type='income',
+        totals = user.transactions.filter(
             date__year=month.year,
             date__month=month.month
-        ).aggregate(total=Sum('amount'))['total'] or 0
-
-        total_expense = user.transactions.filter(
-            category__type='expense',
-            date__year=month.year,
-            date__month=month.month
-        ).aggregate(total=Sum('amount'))['total'] or 0
-
-        current_savings = total_income - total_expense
-        goal.current_amount = current_savings
-        goal.progress = round((current_savings / goal.target_amount) * 100, 2) if goal.target_amount else 0
-
-        if current_savings >= goal.target_amount and not goal.achieved:
-            goal.achieved = True
-            NotificationService.create(
-                user=user,
-                type='GOAL_COMPLETED',
-                title=f"Meta alcanzada: {goal.name}",
-                message=f"¡Felicidades! Has alcanzado tu meta '{goal.name}' de ${goal.target_amount:.2f}.",
-                priority='MEDIUM',
-                send_email=True
-            )
-
-        goal.save()
-
-
-    # ==========================================================
-    # Acción para agregar un aporte parcial a la meta
-    # ==========================================================
-    @action(detail=True, methods=['post'], url_path='add-amount')
-    def add_amount(self, request, pk=None):
-        goal = self.get_object()
-        amount = request.data.get('amount')
-        try:
-            amount = float(amount)
-        except (TypeError, ValueError):
-            return Response({"error": "Monto inválido"}, status=status.HTTP_400_BAD_REQUEST)
-
-        goal.current_amount += amount
-        self.update_goal_status(goal)
-        goal.save()
-
-        serializer = self.get_serializer(goal)
-        return success_response(data=serializer.data, message=f"Aporte de ${amount:.2f} agregado correctamente")
-
-    # ==========================================================
-    # Obtener progreso de una meta
-    # ==========================================================
-    @action(detail=True, methods=['get'], url_path='progress')
-    def progress(self, request, pk=None):
-        """
-        Retorna el porcentaje alcanzado de la meta.
-        """
-        goal = self.get_object()
-        month = goal.month
-        user = request.user
-
-        total_income = user.transactions.filter(
-            category__type='income',
-            date__year=month.year,
-            date__month=month.month
-        ).aggregate(Sum('amount'))['amount__sum'] or 0
-
-        total_expense = user.transactions.filter(
-            category__type='expense',
-            date__year=month.year,
-            date__month=month.month
-        ).aggregate(Sum('amount'))['amount__sum'] or 0
-
-        savings = total_income - total_expense
-        percentage = round(min(savings / goal.target_amount * 100, 100), 2) if goal.target_amount else 0
-
-        return success_response(
-            data={
-                'goal_id': goal.id,
-                'name': goal.name,
-                'target_amount': float(goal.target_amount),
-                'achieved': goal.achieved,
-                'current_savings': float(savings),
-                'progress_percentage': percentage
-            },
-            message="Progreso de meta obtenido correctamente."
+        ).aggregate(
+            income=Sum('amount', filter=Q(category__type='income')),
+            expense=Sum('amount', filter=Q(category__type='expense'))
         )
 
-    # ==========================================================
-    # Exportar metas a CSV / Excel
-    # ==========================================================
-    @action(detail=False, methods=['get'], url_path='export')
-    def export(self, request):
-        user = request.user
-        formato = request.query_params.get('format', 'csv').lower()
-        queryset = self.get_queryset()
+        total_income = Decimal(totals['income'] or 0)
+        total_expense = Decimal(totals['expense'] or 0)
 
-        if not queryset.exists():
-            return error_response("No hay metas para exportar.", status.HTTP_404_NOT_FOUND)
+        goal.current_amount = total_income - total_expense
 
-        if formato == 'csv':
-            buffer = io.StringIO()
-            writer = csv.writer(buffer)
-            writer.writerow(["Nombre", "Mes", "Monto objetivo", "Alcanzada"])
-            for g in queryset:
-                writer.writerow([g.name, g.month.strftime("%Y-%m"), float(g.target_amount), g.achieved])
-            response = HttpResponse(buffer.getvalue(), content_type='text/csv')
-            response['Content-Disposition'] = f'attachment; filename="metas_{user.username}.csv"'
-            return response
+        if goal.current_amount >= goal.target_amount and not goal.achieved:
+            goal.achieved = True
+            # Evitar notificación duplicada
+            if not Notification.objects.filter(
+                user=user,
+                type='GOAL_COMPLETED',
+                title__icontains=goal.name,
+                created_at__year=month.year,
+                created_at__month=month.month
+            ).exists():
+                NotificationService.create(
+                    user=user,
+                    type='GOAL_COMPLETED',
+                    title=f"Meta alcanzada: {goal.name}",
+                    message=f"¡Felicidades! Has alcanzado tu meta de ${goal.target_amount:.2f}.",
+                    priority='MEDIUM',
+                    send_email=True
+                )
 
-        elif formato == 'xlsx':
-            wb = Workbook()
-            ws = wb.active
-            ws.title = "Metas"
-            ws.append(["Nombre", "Mes", "Monto objetivo", "Alcanzada"])
-            for g in queryset:
-                ws.append([g.name, g.month.strftime("%Y-%m"), float(g.target_amount), g.achieved])
-            buffer = io.BytesIO()
-            wb.save(buffer)
-            buffer.seek(0)
-            response = HttpResponse(
-                buffer.getvalue(),
-                content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-            )
-            response['Content-Disposition'] = f'attachment; filename="metas_{user.username}.xlsx"'
-            return response
-
-        return error_response("Formato no soportado. Usa 'csv' o 'xlsx'.", status.HTTP_400_BAD_REQUEST)
+        goal.save()
 
 
 # ==========================================================
@@ -708,6 +605,7 @@ class NotificationViewSet(viewsets.ModelViewSet):
             "archived": archived,
             "percentage_read": round((read / total * 100), 2) if total > 0 else 0
         }
+    
         return success_response(data=data, message="Resumen de notificaciones obtenido correctamente.")
 
 

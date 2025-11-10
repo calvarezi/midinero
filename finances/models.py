@@ -53,10 +53,6 @@ class Transaction(models.Model):
 
 
 class FinancialGoal(models.Model):
-    """
-    Meta financiera mensual del usuario.
-    Permite tener varias metas simultáneas, cada una con su propio progreso.
-    """
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='financial_goals')
     name = models.CharField(max_length=255, default="Meta")
     month = models.DateField()
@@ -66,11 +62,19 @@ class FinancialGoal(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        unique_together = ('user', 'name', 'month') 
+        unique_together = ('user', 'name', 'month')
         ordering = ['-month', 'name']
 
     def __str__(self):
         return f"{self.name} ({self.month.strftime('%Y-%m')})"
+
+    @property
+    def progress(self):
+        if not self.target_amount:
+            return 0
+        progress = (self.current_amount / self.target_amount) * 100
+        return round(min(progress, 100), 2)
+
 
 
 class Notification(models.Model):
@@ -98,6 +102,8 @@ class Notification(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+        unique_together = ('user', 'title', 'message')
+
 
     def __str__(self):
         return f"[{self.get_type_display()}] {self.title}"
@@ -130,96 +136,63 @@ class Budget(models.Model):
     notify_when_exceeded = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
-    class Meta:
-        unique_together = ('user', 'category', 'month')
-        ordering = ['-month']
+    @property
+    def spent_amount(self):
+        total = Transaction.objects.filter(
+            user=self.user,
+            category=self.category,
+            date__year=self.month.year,
+            date__month=self.month.month,
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        return round(total, 2)
 
-    def __str__(self):
-        return f"{self.user.username} - {self.category.name} ({self.month:%Y-%m})"
-
-    # ============================
-    # Logica de notificaciones
-    # ============================
     def check_status(self):
         """
-        Evalúa si el gasto ha superado el 90% o 100% del presupuesto.
-        Envía notificaciones automáticas si corresponde.
+        ✅ Evita notificaciones duplicadas y calcula progreso en una sola función.
         """
-        #  Usar relación inversa en vez de import circular
-        total_spent = self.user.transactions.filter(
-            category=self.category,
-            category__type='expense',
-            date__year=self.month.year,
-            date__month=self.month.month
-        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
-
-        # evitar division por cero
+        total_spent = self.spent_amount
         if self.limit_amount == 0:
-            return  
+            return
 
         progress = (Decimal(total_spent) / Decimal(self.limit_amount)) * Decimal(100)
 
-        #  Evitar notificaciones duplicadas
+        # Evita duplicación
+        existing = Notification.objects.filter(
+            user=self.user,
+            title__icontains=self.category.name,
+            type__in=['BUDGET_EXCEEDED', 'BUDGET_WARNING'],
+            created_at__year=self.month.year,
+            created_at__month=self.month.month
+        )
+
+        # Si ya hay notificación de este mes, no la duplicamos
+        if existing.exists():
+            return
+
+        from finances.services.notifications_service import NotificationService
+
         if progress >= 100 and self.notify_when_exceeded:
-            # Verificar si ya existe notificación reciente
-            recent_notification = Notification.objects.filter(
+            NotificationService.create(
                 user=self.user,
                 type='BUDGET_EXCEEDED',
-                title__icontains=self.category.name,
-                created_at__year=self.month.year,
-                created_at__month=self.month.month
-            ).exists()
-
-            if not recent_notification:
-                # Import del servicio 
-                from finances.services.notifications_service import NotificationService
-                
-                NotificationService.create(
-                    user=self.user,
-                    type='BUDGET_EXCEEDED',
-                    title=f"Presupuesto superado: {self.category.name}",
-                    message=(
-                        f"Has superado tu presupuesto para {self.category.name} en {self.month.strftime('%Y-%m')}. "
-                        f"Gasto total: ${total_spent:.2f} / Límite: ${self.limit_amount:.2f}."
-                    ),
-                    priority='HIGH',
-                    send_email=True
-                )
+                title=f"Presupuesto superado: {self.category.name}",
+                message=(
+                    f"Has superado el presupuesto de ${self.limit_amount:.2f} "
+                    f"para {self.category.name}. Gasto total: ${total_spent:.2f}."
+                ),
+                priority='HIGH',
+                send_email=True
+            )
 
         elif progress >= 90 and self.notify_when_exceeded:
-            # Verificar si ya existe notificación de advertencia reciente
-            recent_warning = Notification.objects.filter(
+            NotificationService.create(
                 user=self.user,
                 type='BUDGET_WARNING',
-                title__icontains=self.category.name,
-                created_at__year=self.month.year,
-                created_at__month=self.month.month
-            ).exists()
-
-            if not recent_warning:
-                from finances.services.notifications_service import NotificationService
-                
-                NotificationService.create(
-                    user=self.user,
-                    type='BUDGET_WARNING',
-                    title=f"Presupuesto casi agotado: {self.category.name}",
-                    message=(
-                        f"Ya usaste el {progress:.1f}% del presupuesto para {self.category.name} "
-                        f"en {self.month.strftime('%Y-%m')}. Controla tus gastos."
-                    ),
-                    priority='MEDIUM',
-                    send_email=True
-                )
-
-    def save(self, *args, **kwargs):
-        """
-        Al guardar el presupuesto, verifica automáticamente su estado.
-        """
-        super().save(*args, **kwargs)
-        try:
-            self.check_status()
-        except Exception as e:
-            
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.warning(f"No se pudo verificar estado del presupuesto {self.id}: {e}")
+                title=f"Presupuesto casi agotado: {self.category.name}",
+                message=(
+                    f"Ya usaste el {progress:.1f}% del presupuesto para {self.category.name} "
+                    f"en {self.month.strftime('%Y-%m')}."
+                ),
+                priority='MEDIUM',
+                send_email=True
+            )
