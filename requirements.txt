@@ -1,0 +1,27 @@
+# Backend Django
+Django==5.2.8
+djangorestframework==3.14.0
+
+# Autenticación JWT
+djangorestframework-simplejwt==5.5.1
+
+# Documentación OpenAPI
+drf-spectacular==0.27.2
+drf-spectacular-sidecar==2024.12.1
+
+# CORS
+django-corsheaders==4.3.0
+
+# Filtros
+django-filter==24.3
+
+# Reportes y Excel
+reportlab==4.0.9
+openpyxl==3.10.10
+
+# Configuración
+python-decouple==3.8
+
+# Testing (opcional)
+pytest==7.4.3
+pytest-django==4.7.0
